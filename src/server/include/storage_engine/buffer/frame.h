@@ -108,6 +108,6 @@ private:
   std::atomic<int>  pin_count_{0};
   unsigned long     acc_time_  = 0;
   int               file_desc_ = -1;
-  Page              page_;
+  Page              page_; // 页帧中对应磁盘文件的页面
 };
 

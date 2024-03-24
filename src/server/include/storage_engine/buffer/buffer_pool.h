@@ -67,6 +67,7 @@ public:
   RC dispose_page(PageNum page_num);
 
 protected:
+  // 申请一个frame，如果没有空闲的frame，则驱逐一些frame
   RC allocate_frame(PageNum page_num, Frame **buf);
   RC flush_page_internal(Frame &frame);
   /**
