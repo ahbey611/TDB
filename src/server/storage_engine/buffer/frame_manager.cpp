@@ -53,7 +53,51 @@ Frame *FrameManager::get(int file_desc, PageNum page_num)
  */
 int FrameManager::evict_frames(int count, std::function<RC(Frame *frame)> evict_action)
 {
-  return 0;
+  // 刷盘场景1：内存缓冲区已满，需要进行页面置换
+  /*
+   * Frame是磁盘文件的每个页面在内存中的存储方式，也是数据持久化的基本单位，在内存中由FrameLruCache管理。
+   * 但FrameLruCache容量是有限的，当已分配的Frame数量达到阈值，
+   * 但仍需要申请新的Frame来存储新Page的数据时，就需要进行页帧替换，
+   * 将pin count=0的Frame驱逐出去。还要注意如果这些Frame对应的Page是脏页（即发生过数据修改），
+   * 就需要先刷回磁盘再驱逐。
+   */
+
+  /*
+   * 提示
+   * 1. 该函数的作用是将pin_count_为0的frame从队列中驱逐
+   * 2. 参数evict_action表示如何处理脏数据的frame，一般是要刷回磁盘，同学们可以参考FileBufferPool::allocate_frame方法中的相关逻辑
+   * 3. 对于FrameLruCache的使用，要通过加锁保证线程安全，但注意避免死锁
+   * 4. 需要调用FrameAllocator的接口彻底释放该Frame
+   */
+
+    std::lock_guard<std::mutex> lock_guard(lock_);
+    std::list<Frame *> frames;
+    auto fetcher = [&frames](const FrameId &frame_id, Frame *const frame) -> bool {
+        if (frame->pin_count() == 0) {
+            frame->pin();
+            frames.push_back(frame);
+        }
+        return true;
+    };
+
+    int evict_count = 0;
+
+    frames_.foreach(fetcher);
+    for (auto frame : frames) {
+        if (count <= 0) {
+            break;
+        }
+        if (frame->dirty()) {
+            evict_action(frame);
+        }
+        frames_.remove(frame->frame_id());
+        allocator_.free(frame);
+        count--;
+        evict_count++;
+    }
+
+    return evict_count;
+
 }
 
 Frame *FrameManager::get_internal(const FrameId &frame_id)

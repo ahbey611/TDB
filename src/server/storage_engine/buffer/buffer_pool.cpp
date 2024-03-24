@@ -25,17 +25,26 @@ FileBufferPool::~FileBufferPool()
 RC FileBufferPool::open_file(const char *file_name)
 {
   int fd = open(file_name, O_RDWR);
+
+  // 文件打开失败
   if (fd < 0) {
     LOG_ERROR("Failed to open file %s, because %s.", file_name, strerror(errno));
     return RC::IOERR_ACCESS;
   }
+
+  // 打开文件成功
   LOG_INFO("Successfully open buffer pool file %s.", file_name);
 
+  // 保存所映射的文件名和文件描述符
   file_name_ = file_name;
   file_desc_ = fd;
 
   RC rc = RC::SUCCESS;
+
+  // 分配页帧，对应的是所映射磁盘文件的文件头
   rc = allocate_frame(BP_HEADER_PAGE, &hdr_frame_);
+
+  // 分配失败：可能原因是没有空闲的帧，需要驱逐一些帧
   if (rc != RC::SUCCESS) {
     LOG_ERROR("failed to allocate frame for header. file name %s", file_name_.c_str());
     close(fd);
@@ -43,17 +52,21 @@ RC FileBufferPool::open_file(const char *file_name)
     return rc;
   }
 
+  // 分配页帧成功，设置文件描述符，刷新访问时间
   hdr_frame_->set_file_desc(fd);
   hdr_frame_->access();
 
+  // 加载当前磁盘文件的指定Page的Data到内存的Frame中
   if ((rc = load_page(BP_HEADER_PAGE, hdr_frame_)) != RC::SUCCESS) {
     LOG_ERROR("Failed to load first page of %s, due to %s.", file_name, strerror(errno));
+    // 释放/驱逐帧 （因为分配了帧，但是加载失败了）
     evict_page(BP_HEADER_PAGE, hdr_frame_);
     close(fd);
     file_desc_ = -1;
     return rc;
   }
 
+  // 从Frame中获取文件头
   file_header_ = (FileHeader *)hdr_frame_->data();
 
   LOG_INFO("Successfully open %s. file_desc=%d, hdr_frame=%p, file header=%s",
@@ -134,6 +147,9 @@ RC FileBufferPool::get_this_page(PageNum page_num, Frame **frame)
   return RC::SUCCESS;
 }
 
+/**
+ * 在指定文件中分配一个新的页面，并将其放入缓冲区，返回页帧句柄指针。
+ */
 RC FileBufferPool::allocate_page(Frame **frame)
 {
   RC rc = RC::SUCCESS;
@@ -141,6 +157,7 @@ RC FileBufferPool::allocate_page(Frame **frame)
   lock_.lock();
 
   int byte = 0, bit = 0;
+  // 有空闲的页面
   if ((file_header_->allocated_pages) < (file_header_->page_count)) {
     // There is one free page
     for (int i = 0; i < file_header_->page_count; i++) {
@@ -157,6 +174,7 @@ RC FileBufferPool::allocate_page(Frame **frame)
     }
   }
 
+  // 没有空闲的页面
   if (file_header_->page_count >= FileHeader::MAX_PAGE_NUM) {
     LOG_WARN("file buffer pool is full. page count %d, max page count %d",
         file_header_->page_count, FileHeader::MAX_PAGE_NUM);
@@ -164,6 +182,8 @@ RC FileBufferPool::allocate_page(Frame **frame)
     return RC::BUFFERPOOL_NOBUF;
   }
 
+  // Allocate one page and load the data into this page
+  // 申请一个新的页面
   PageNum page_num = file_header_->page_count;
   Frame *allocated_frame = nullptr;
   if ((rc = allocate_frame(page_num, &allocated_frame)) != RC::SUCCESS) {
@@ -213,11 +233,34 @@ RC FileBufferPool::flush_page(Frame &frame)
  */
 RC FileBufferPool::flush_page_internal(Frame &frame)
 {
-//  1. 获取页面Page
-//  2. 计算该Page在文件中的偏移量
-//  3. 写入数据到文件的目标位置
-//  4. 清除frame的脏标记
-//  5. 记录和返回成功
+  //  1. 获取页面Page
+  //  2. 计算该Page在文件中的偏移量
+  //  3. 写入数据到文件的目标位置
+  //  4. 清除frame的脏标记
+  //  5. 记录和返回成功
+
+  //获取page
+  Page &page = frame.page();
+  // 计算该Page在文件中的偏移量
+  int64_t offset = ((int64_t)frame.page_num()) * BP_PAGE_SIZE;
+  // lseek控制该文件的读写位置（SEEK_SET: 参数offset 即为新的读写位置）
+  if (lseek(file_desc_, offset, SEEK_SET) == -1) {
+      LOG_ERROR("Failed to flush page %s:%d, due to failed to lseek:%s.", file_name_.c_str(), frame.page_num(), strerror(errno));
+      return RC::IOERR_SEEK;
+  }
+  // 写入数据到文件的目标位置
+  int ret = writen(file_desc_, &page, BP_PAGE_SIZE);
+        // 写入失败
+  if (ret != 0) {
+      LOG_ERROR("Failed to flush page %s, file_desc:%d, page num:%d, due to failed to write data:%s, ret=%d, page count=%d",
+                file_name_.c_str(), file_desc_, frame.page_num(), strerror(errno), ret, file_header_->allocated_pages);
+      return RC::IOERR_WRITE;
+  }
+
+  // 去除frame的脏标记
+  frame.clear_dirty();
+
+
   return RC::SUCCESS;
 }
 
@@ -226,13 +269,54 @@ RC FileBufferPool::flush_page_internal(Frame &frame)
  */
 RC FileBufferPool::evict_page(PageNum page_num, Frame *buf)
 {
-  return RC::SUCCESS;
+  /*
+   * 刷盘场景2：关闭文件时，驱逐全部Frame并刷盘
+   * 当关闭文件时，该FileBufferPool需要将其管理的所有Frame从内存中驱逐并刷回到磁盘，
+   * 以保证数据能够持久化到磁盘文件中。
+   * */
+
+  /*
+   * 提示
+   * 1. evict_page函数需要使用前面实现的flush_page的逻辑，但注意避免死锁
+   * 2. evict_page函数除了将脏页刷盘，还需要做一些状态检查和内存管理的工作
+   * 3. evict_all_pages函数是在关闭文件时被调用的，因此需要将该文件对应的Frame都依次驱逐并刷盘
+   */
+
+  // 1. 如果该frame对应的文件描述符和当前文件描述符一致，则直接刷盘
+  if (buf->file_desc() == file_desc_) {
+      return flush_page_internal(*buf);
+  }
+
+  // 2. 否则，调用bp_manager_.flush_page(*frame)刷盘（bp_manager_中会根据file_desc_找到对应的FileBufferPool）
+  else {
+      return bp_manager_.flush_page(*buf);
+  }
+
 }
 /**
  * TODO [Lab1] 需要同学们实现该文件所有页面的驱逐
  */
 RC FileBufferPool::evict_all_pages()
 {
+  /*
+   * 刷盘场景2：关闭文件时，驱逐全部Frame并刷盘
+   * 当关闭文件时，该FileBufferPool需要将其管理的所有Frame从内存中驱逐并刷回到磁盘，
+   * 以保证数据能够持久化到磁盘文件中。
+   * */
+
+  // 1. 遍历所有的frame，调用evict_page驱逐每个frame
+  for (int i = 0; i < frame_manager_.frame_num(); i++) {
+      // 根据file_desc_和page_num获取frame
+      Frame *frame = frame_manager_.get(file_desc_,i);
+      if (frame != nullptr) {
+        // 调用evict_page驱逐每个frame
+         RC rc= evict_page(frame->page_num(), frame);
+           if (rc != RC::SUCCESS) {
+               LOG_ERROR("Failed to evict all pages, due to failed to evict page %d. rc=%s", i, strrc(rc));
+               return rc;
+           }
+      }
+  }
   return RC::SUCCESS;
 }
 
@@ -241,14 +325,18 @@ RC FileBufferPool::evict_all_pages()
  */
 RC FileBufferPool::allocate_frame(PageNum page_num, Frame **buffer)
 {
+  // 驱逐策略：如果frame的dirty标记为false，则直接驱逐
   auto evict_action = [this](Frame *frame) {
     if (!frame->dirty()) {
       return RC::SUCCESS;
     }
     RC rc = RC::SUCCESS;
+    // 如果该frame对应的文件描述符和当前文件描述符一致，则直接刷盘
     if (frame->file_desc() == file_desc_) {
       rc = this->flush_page_internal(*frame);
-    } else {
+    }
+    // 否则，调用bp_manager_.flush_page(*frame)刷盘
+    else {
       rc = bp_manager_.flush_page(*frame);
     }
     if (rc != RC::SUCCESS) {
@@ -276,15 +364,18 @@ RC FileBufferPool::allocate_frame(PageNum page_num, Frame **buffer)
  */
 RC FileBufferPool::load_page(PageNum page_num, Frame *frame)
 {
+  // 根据page_num计算出该页面在文件中的偏移量
   int64_t offset = ((int64_t)page_num) * BP_PAGE_SIZE;
+  // lseek控制该文件的读写位置（SEEK_SET: 参数offset 即为新的读写位置）
   if (lseek(file_desc_, offset, SEEK_SET) == -1) {
     LOG_ERROR("Failed to load page %s:%d, due to failed to lseek:%s.", file_name_.c_str(), page_num, strerror(errno));
-
     return RC::IOERR_SEEK;
   }
 
   Page &page = frame->page();
+  // 读取一页Page数据到frame中
   int ret = readn(file_desc_, &page, BP_PAGE_SIZE);
+  // 读取失败
   if (ret != 0) {
     LOG_ERROR("Failed to load page %s, file_desc:%d, page num:%d, due to failed to read data:%s, ret=%d, page count=%d",
               file_name_.c_str(), file_desc_, page_num, strerror(errno), ret, file_header_->allocated_pages);
@@ -376,6 +467,13 @@ BufferPoolManager::~BufferPoolManager()
 {
   std::unordered_map<std::string, FileBufferPool *> tmp_bps;
   tmp_bps.swap(buffer_pools_);
+  // 打印tmp_bps
+  std::cout << "Printing contents of tmp_bps:" << std::endl;
+  for (const auto &entry : tmp_bps) {
+    std::cout << "Key: " << entry.first << ", Value: " << entry.second << std::endl;
+  }
+
+
   for (auto &iter : tmp_bps) {
     delete iter.second;
   }
@@ -427,11 +525,14 @@ RC BufferPoolManager::open_file(const char *_file_name, FileBufferPool *&_bp)
   std::string file_name(_file_name);
 
   std::scoped_lock lock_guard(lock_);
+
+  // 查看文件是否已经打开
   if (buffer_pools_.find(file_name) != buffer_pools_.end()) {
     LOG_WARN("file already opened. file name=%s", _file_name);
     return RC::BUFFERPOOL_OPEN;
   }
 
+  // 创建一个新的FileBufferPool (一个FileBufferPool对象对应一个文件)
   FileBufferPool *bp = new FileBufferPool(*this, frame_manager_);
   RC rc = bp->open_file(_file_name);
   if (rc != RC::SUCCESS) {
@@ -440,6 +541,7 @@ RC BufferPoolManager::open_file(const char *_file_name, FileBufferPool *&_bp)
     return rc;
   }
 
+  // 将FileBufferPool对象插入到buffer_pools_和fd_buffer_pools_中
   buffer_pools_.insert(std::pair<std::string, FileBufferPool *>(file_name, bp));
   fd_buffer_pools_.insert(std::pair<int, FileBufferPool *>(bp->file_desc(), bp));
   LOG_DEBUG("insert buffer pool into fd buffer pools. fd=%d, bp=%p, lbt=%s", bp->file_desc(), bp, lbt());
@@ -486,7 +588,21 @@ RC BufferPoolManager::close_file(const char *_file_name)
  */
 RC BufferPoolManager::flush_page(Frame &frame)
 {
-  return RC::SUCCESS;
+  //  1. BufferPoolManager管理全部文件的页面和页帧，因此需要先找到该Frame对应的FileBufferPool，再调用FileBufferPool的flush_page(Frame &frame)进行刷盘
+  //  2. 由于BufferPoolManager是全局单例，因此在使用它的公共资源需要加锁，以确保多线程环境下的线程安全
+
+  // 加一把锁
+  std::scoped_lock lock_guard(lock_);
+  // 找到该Frame对应的FileBufferPool
+  auto iter = fd_buffer_pools_.find(frame.file_desc());
+  // 找不到对应的FileBufferPool
+  if (iter == fd_buffer_pools_.end()) {
+      LOG_ERROR("Failed to flush page, due to failed to find buffer pool for file desc %d.", frame.file_desc());
+      return RC::BUFFERPOOL_NOBUF;
+  }
+  // 调用FileBufferPool的flush_page(Frame &frame)进行刷盘
+  return iter->second->flush_page(frame);
+
 }
 
 static BufferPoolManager *default_bpm = nullptr;
