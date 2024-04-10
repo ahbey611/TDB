@@ -72,6 +72,7 @@ int FrameManager::evict_frames(int count, std::function<RC(Frame *frame)> evict_
 
     std::lock_guard<std::mutex> lock_guard(lock_);
     std::list<Frame *> frames;
+    // 从FrameLruCache中获取所有pin_count为0的frame
     auto fetcher = [&frames](const FrameId &frame_id, Frame *const frame) -> bool {
         if (frame->pin_count() == 0) {
             frame->pin();
@@ -80,17 +81,24 @@ int FrameManager::evict_frames(int count, std::function<RC(Frame *frame)> evict_
         return true;
     };
 
-    int evict_count = 0;
+    int evict_count = 0; // 驱逐的frame数量
 
+    // 遍历所有frame，找到pin_count为0的frame
     frames_.foreach(fetcher);
+
+    // 遍历所有frame，找到pin_count为0的frame
     for (auto frame : frames) {
+        // 如果需要驱逐的frame数量已经达到要求，则退出
         if (count <= 0) {
             break;
         }
+        // 如果frame是脏页，需要先刷回磁盘
         if (frame->dirty()) {
             evict_action(frame);
         }
+        // 从FrameLruCache中移除frame
         frames_.remove(frame->frame_id());
+        // 释放frame
         allocator_.free(frame);
         count--;
         evict_count++;
