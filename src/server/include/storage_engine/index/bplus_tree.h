@@ -187,6 +187,9 @@ class KeyPrinter
 /**
  * @brief the meta information of bplus tree
  * @details this is the first page of bplus tree.
+ * 所有的结点（即 page）都存储在磁盘上的索引文件 IndexFile 中，
+ * 其中文件的第一个 page 是索引文件头，存储了一些元数据，如 root page 的 page num，
+ * 内部结点和叶子结点能够存储键值对的最大个数等。
  */
 struct IndexFileHeader
 {
@@ -228,7 +231,7 @@ struct IndexFileHeader
 };
 
 /**
- * @brief the common part of page describtion of bplus tree
+ * @brief the common part of page describtion of bplus tree，b+树的节点的公共部分
  * @code
  * storage format:
  * | page type | item number | parent page id |
@@ -244,7 +247,7 @@ struct IndexNode
 };
 
 /**
- * @brief leaf page of bplus tree
+ * @brief leaf page of bplus tree ，b+树的叶子节点
  * @code
  * storage format:
  * | common header | next page id |
@@ -256,17 +259,20 @@ struct IndexNode
  */
 struct LeafIndexNode : public IndexNode
 {
+  // 16
   static constexpr int HEADER_SIZE = IndexNode::HEADER_SIZE + 4;
 
+  // 相邻叶子节点的页号（右边）
   PageNum next_brother;
   /**
    * leaf can store order keys and rids at most
+   * 叶子节点最多存储order个键值对
    */
   char array[0];
 };
 
 /**
- * @brief internal page of bplus tree
+ * @brief internal page of bplus tree, b+树的内部节点
  * @code
  * storage format:
  * | common header |
@@ -280,6 +286,7 @@ struct InternalIndexNode : public IndexNode
 
   /**
    * internal node just store key_num-1 keys and key_num page_ids, the last page_id is last right child.
+   * 内部节点存储的是key_num-1个键值和key_num个子节点的页号，最后一个子节点是最右边的子节点
    */
   char array[0];
 };
@@ -376,7 +383,7 @@ class LeafIndexNodeHandler : public IndexNodeHandler
   void preappend(const char *item);
 
  private:
-  LeafIndexNode *leaf_node_;
+  LeafIndexNode *leaf_node_; // 当前叶子节点的数据
 };
 
 /**
