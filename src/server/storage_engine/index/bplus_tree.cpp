@@ -8,6 +8,11 @@ using namespace common;
 
 #define FIRST_INDEX_PAGE 1
 
+/**
+ * 计算一个内部节点的容量
+ * @param attr_length
+ * @return
+ */
 int calc_internal_page_capacity(int attr_length)
 {
   int item_size = attr_length + sizeof(RID) + sizeof(PageNum);
@@ -16,6 +21,11 @@ int calc_internal_page_capacity(int attr_length)
   return capacity;
 }
 
+/**
+ * 计算一个叶子节点的容量
+ * @param attr_length
+ * @return
+ */
 int calc_leaf_page_capacity(int attr_length)
 {
   int item_size = attr_length + sizeof(RID) + sizeof(RID);
@@ -28,10 +38,13 @@ IndexNodeHandler::IndexNodeHandler(const IndexFileHeader &header, Frame *frame)
     : header_(header), page_num_(frame->page_num()), node_((IndexNode *)frame->data())
 {}
 
+// 判断是否是叶子节点
 bool IndexNodeHandler::is_leaf() const
 {
   return node_->is_leaf;
 }
+
+// 初始化一个空节点
 void IndexNodeHandler::init_empty(bool leaf)
 {
   node_->is_leaf = leaf;
@@ -63,11 +76,14 @@ int IndexNodeHandler::size() const
   return node_->key_num;
 }
 
+// 获取节点的最大容量
 int IndexNodeHandler::max_size() const
 {
+  // 根据节点类型返回不同的最大容量（在索引文件头部中定义）
   return is_leaf() ? header_.leaf_max_size : header_.internal_max_size;
 }
 
+// 获取节点的最小容量
 int IndexNodeHandler::min_size() const
 {
   const int max = this->max_size();
@@ -101,6 +117,7 @@ bool IndexNodeHandler::is_safe(BplusTreeOperationType op, bool is_root_node)
       return true;
     } break;
     case BplusTreeOperationType::INSERT: {
+      // 如果是插入操作，只有当节点的大小小于最大容量时，才不需要分裂，否则需要分裂
       return size() < max_size();
     } break;
     case BplusTreeOperationType::DELETE: {
@@ -133,6 +150,10 @@ std::string to_string(const IndexNodeHandler &handler)
   return ss.str();
 }
 
+/**
+ * 验证一个节点是否合法
+ * @return
+ */
 bool IndexNodeHandler::validate() const
 {
   if (parent_page_num() == BP_INVALID_PAGE_NUM) {
@@ -155,34 +176,44 @@ LeafIndexNodeHandler::LeafIndexNodeHandler(const IndexFileHeader &header, Frame 
     : IndexNodeHandler(header, frame), leaf_node_((LeafIndexNode *)frame->data())
 {}
 
+// 初始化一个空的叶子节点
 void LeafIndexNodeHandler::init_empty()
 {
   IndexNodeHandler::init_empty(true);
+  // 叶子节点的下一个兄弟节点设置为-1
   leaf_node_->next_brother = BP_INVALID_PAGE_NUM;
 }
 
+// 设置叶子节点的下一个兄弟节点
 void LeafIndexNodeHandler::set_next_page(PageNum page_num)
 {
   leaf_node_->next_brother = page_num;
 }
 
+// 获取叶子节点的下一个兄弟节点
 PageNum LeafIndexNodeHandler::next_page() const
 {
   return leaf_node_->next_brother;
 }
 
+// 获取叶子节点的key
 char *LeafIndexNodeHandler::key_at(int index)
 {
   assert(index >= 0 && index < size());
   return __key_at(index);
 }
 
+// 获取叶子节点的value
 char *LeafIndexNodeHandler::value_at(int index)
 {
   assert(index >= 0 && index < size());
   return __value_at(index);
 }
 
+/**
+   * 查找指定key的插入位置(注意不是key本身)
+   * 如果key已经存在，会设置found的值。
+ */
 int LeafIndexNodeHandler::lookup(const KeyComparator &comparator, const char *key, bool *found /* = nullptr */) const
 {
   const int size = this->size();
@@ -192,6 +223,7 @@ int LeafIndexNodeHandler::lookup(const KeyComparator &comparator, const char *ke
   return iter - iter_begin;
 }
 
+// 插入一个key-value
 void LeafIndexNodeHandler::insert(int index, const char *key, const char *value)
 {
   if (index < size()) {
@@ -201,6 +233,8 @@ void LeafIndexNodeHandler::insert(int index, const char *key, const char *value)
   memcpy(__item_at(index) + key_size(), value, value_size());
   increase_size(1);
 }
+
+// 删除一个key-value
 void LeafIndexNodeHandler::remove(int index)
 {
   assert(index >= 0 && index < size());
@@ -210,6 +244,7 @@ void LeafIndexNodeHandler::remove(int index)
   increase_size(-1);
 }
 
+// 删除一个key （根据key的值）
 int LeafIndexNodeHandler::remove(const char *key, const KeyComparator &comparator)
 {
   bool found = false;
@@ -221,6 +256,7 @@ int LeafIndexNodeHandler::remove(const char *key, const KeyComparator &comparato
   return 0;
 }
 
+// 移动一半的数据到另一个节点（用于分裂）
 RC LeafIndexNodeHandler::move_half_to(LeafIndexNodeHandler &other, FileBufferPool *bp)
 {
   const int size = this->size();
@@ -232,6 +268,7 @@ RC LeafIndexNodeHandler::move_half_to(LeafIndexNodeHandler &other, FileBufferPoo
   return RC::SUCCESS;
 }
 
+// 移动第一个数据到另一个节点的最后（用于合并）
 RC LeafIndexNodeHandler::move_first_to_end(LeafIndexNodeHandler &other, FileBufferPool *bp)
 {
   other.append(__item_at(0));
@@ -243,6 +280,7 @@ RC LeafIndexNodeHandler::move_first_to_end(LeafIndexNodeHandler &other, FileBuff
   return RC::SUCCESS;
 }
 
+// 移动最后一个数据到另一个节点的最前（用于合并）
 RC LeafIndexNodeHandler::move_last_to_front(LeafIndexNodeHandler &other, FileBufferPool *bp)
 {
   other.preappend(__item_at(size() - 1));
@@ -251,6 +289,7 @@ RC LeafIndexNodeHandler::move_last_to_front(LeafIndexNodeHandler &other, FileBuf
   return RC::SUCCESS;
 }
 
+// 移动数据到另一个节点
 RC LeafIndexNodeHandler::move_to(LeafIndexNodeHandler &other, FileBufferPool *bp)
 {
   memcpy(other.__item_at(other.size()), this->__item_at(0), static_cast<size_t>(this->size()) * item_size());
@@ -261,12 +300,14 @@ RC LeafIndexNodeHandler::move_to(LeafIndexNodeHandler &other, FileBufferPool *bp
   return RC::SUCCESS;
 }
 
+// 从另一个节点复制数据到自己
 void LeafIndexNodeHandler::append(const char *item)
 {
   memcpy(__item_at(size()), item, item_size());
   increase_size(1);
 }
 
+// insert one item to the first slot ，插入一个数据到最前面
 void LeafIndexNodeHandler::preappend(const char *item)
 {
   if (size() > 0) {
@@ -991,6 +1032,7 @@ RC BplusTreeHandler::print_leafs()
   return rc;
 }
 
+// 检查树的有效性
 bool BplusTreeHandler::validate_node_recursive(Frame *frame)
 {
   bool result = true;
@@ -1017,6 +1059,7 @@ bool BplusTreeHandler::validate_node_recursive(Frame *frame)
   return result;
 }
 
+// 检查叶子节点的链表是否有效
 bool BplusTreeHandler::validate_leaf_link()
 {
   if (is_empty()) {
@@ -1094,12 +1137,14 @@ RC BplusTreeHandler::find_leaf(BplusTreeOperationType op, const char *key, Frame
   return find_leaf_internal(op, child_page_getter, frame);
 }
 
+// 获取最左边的叶子节点
 RC BplusTreeHandler::left_most_page( Frame *&frame)
 {
   auto child_page_getter = [](InternalIndexNodeHandler &internal_node) { return internal_node.value_at(0); };
   return find_leaf_internal(BplusTreeOperationType::READ, child_page_getter, frame);
 }
 
+//
 RC BplusTreeHandler::find_leaf_internal(BplusTreeOperationType op,
     const std::function<PageNum(InternalIndexNodeHandler &)> &child_page_getter,
     Frame *&frame)
@@ -1145,44 +1190,63 @@ RC BplusTreeHandler::crabing_protocal_fetch_page(BplusTreeOperationType op,
   return rc;
 }
 
+// 插入数据
 RC BplusTreeHandler::insert_entry_into_leaf_node(Frame *frame, const char *key, const RID *rid)
 {
   LeafIndexNodeHandler leaf_node(file_header_, frame);
   bool exists = false; // 该数据是否已经存在指定的叶子节点中了
+  // 查找插入位置
   int insert_position = leaf_node.lookup(key_comparator_, key, &exists);
+  // 如果数据已经存在，则返回错误
   if (exists) {
     LOG_TRACE("entry exists");
     return RC::RECORD_DUPLICATE_KEY;
   }
 
+  // 如果叶子节点还没有满，则直接插入
   if (leaf_node.size() < leaf_node.max_size()) {
+    // 将数据插入到指定位置
     leaf_node.insert(insert_position, key, (const char *)rid);
+    // 标记为脏页
     frame->mark_dirty();
     file_buffer_pool_->unpin_page(frame);
     return RC::SUCCESS;
   }
 
+  // 如果叶子节点已经满了，则需要进行分裂操作
   Frame *new_frame = nullptr;
+  // 分裂叶子节点
   RC rc = split<LeafIndexNodeHandler>(frame, new_frame);
   if (rc != RC::SUCCESS) {
     LOG_WARN("failed to split leaf node. rc=%d:%s", rc, strrc(rc));
     return rc;
   }
 
+  // 获取新的叶子节点
+  // A -> C ，现在要插入B
   LeafIndexNodeHandler new_index_node(file_header_, new_frame);
+  // 对于新的叶子节点，将next设置为原来叶子节点的next（链表概念）
+  // A -> C 且 B -> C （A指向C变成B指向C）
   new_index_node.set_next_page(leaf_node.next_page());
+  // 将新的叶子节点的父节点设置为原来叶子节点的父节点
   new_index_node.set_parent_page_num(leaf_node.parent_page_num());
+  // 链表概念，将旧的叶子节点的next设置为新的叶子节点
+  // A -> B -> C （A指向C变成A指向B）
   leaf_node.set_next_page(new_frame->page_num());
 
+  // 判断插入位置
   if (insert_position < leaf_node.size()) {
+    // 将数据插入到旧的叶子节点中
     leaf_node.insert(insert_position, key, (const char *)rid);
   } else {
+    // 将数据插入到新的叶子节点中
     new_index_node.insert(insert_position - leaf_node.size(), key, (const char *)rid);
   }
 
   return insert_entry_into_parent(frame, new_frame, new_index_node.key_at(0));
 }
 
+// 插入数据到父节点
 RC BplusTreeHandler::insert_entry_into_parent(Frame *frame, Frame *new_frame, const char *key)
 {
   RC rc = RC::SUCCESS;
@@ -1271,6 +1335,7 @@ RC BplusTreeHandler::insert_entry_into_parent(Frame *frame, Frame *new_frame, co
 }
 
 /**
+ * 分裂一个满的节点成两个
  * split one full node into two
  */
 template <typename IndexNodeHandlerType>
@@ -1296,6 +1361,7 @@ RC BplusTreeHandler::split(Frame *frame, Frame *&new_frame)
   return RC::SUCCESS;
 }
 
+// 设置根节点的页号
 void BplusTreeHandler::update_root_page_num_locked(PageNum root_page_num)
 {
   file_header_.root_page = root_page_num;
@@ -1303,6 +1369,7 @@ void BplusTreeHandler::update_root_page_num_locked(PageNum root_page_num)
   LOG_DEBUG("set root page to %d", root_page_num);
 }
 
+// 创建一个新的树
 RC BplusTreeHandler::create_new_tree(const char *key, const RID *rid)
 {
   RC rc = RC::SUCCESS;
@@ -1329,6 +1396,7 @@ RC BplusTreeHandler::create_new_tree(const char *key, const RID *rid)
   return rc;
 }
 
+// 创建key 用于插入
 MemPoolItem::unique_ptr BplusTreeHandler::make_key(const char *multi_keys[], const RID &rid, int multi_keys_amount, int left_or_right,  bool all_in_one_input_key)
 {
   MemPoolItem::unique_ptr key = mem_pool_item_->alloc_unique_ptr();
@@ -1390,6 +1458,11 @@ MemPoolItem::unique_ptr BplusTreeHandler::make_key(const char *multi_keys[], con
   return key;
 }
 
+/**
+ * 此函数向IndexHandle对应的索引中插入一个索引项。
+ * 参数multi_keys指向要插入的属性值（之所以是数组，因为可能是多字段索引），参数rid标识该索引项对应的元组位置，
+ * 即向索引中插入一个值为（multi_keys，rid）的键值对
+ */
 RC BplusTreeHandler::insert_entry(const char *multi_keys[], const RID *rid, int multi_keys_amount)
 {
   if (multi_keys == nullptr || rid == nullptr) {
@@ -1397,6 +1470,7 @@ RC BplusTreeHandler::insert_entry(const char *multi_keys[], const RID *rid, int 
     return RC::INVALID_ARGUMENT;
   }
 
+  // 创建key
   MemPoolItem::unique_ptr pkey = make_key(multi_keys, *rid, multi_keys_amount);
   if (pkey == nullptr) {
     LOG_WARN("Failed to alloc memory for key.");
@@ -1405,17 +1479,20 @@ RC BplusTreeHandler::insert_entry(const char *multi_keys[], const RID *rid, int 
 
   char *key = static_cast<char *>(pkey.get());
 
+  // 如果树为空，则创建一个新的树
   if (is_empty()) {
     return create_new_tree(key, rid);
   }
 
   Frame *frame = nullptr;
+  // 根据key查找叶子节点
   RC rc = find_leaf(BplusTreeOperationType::INSERT, key, frame);
   if (rc != RC::SUCCESS) {
     LOG_WARN("Failed to find leaf %s. rc=%d:%s", rid->to_string().c_str(), rc, strrc(rc));
     return rc;
   }
 
+  // 插入数据到叶子节点
   rc = insert_entry_into_leaf_node(frame, key, rid);
   if (rc != RC::SUCCESS) {
     LOG_TRACE("Failed to insert into leaf of index, rid:%s. rc=%s", rid->to_string().c_str(), strrc(rc));
@@ -1426,6 +1503,11 @@ RC BplusTreeHandler::insert_entry(const char *multi_keys[], const RID *rid, int 
   return RC::SUCCESS;
 }
 
+/**
+ * 获取指定值的record对应的RID
+ * @param multi_keys 索引字段的属性值数组（之所以是数组，因为可能是多字段索引）
+ * @param rids  返回值，存储记录所在的位置（之所以是列表，因为可能该字段上有重复值）
+ */
 RC BplusTreeHandler::get_entry(const char *multi_keys[], std::list<RID> &rids, int multi_keys_amount)
 {
   RID invalid_rid;
@@ -1455,6 +1537,7 @@ RC BplusTreeHandler::get_entry(const char *multi_keys[], std::list<RID> &rids, i
   return rc;
 }
 
+// 调整根节点
 RC BplusTreeHandler::adjust_root(Frame *root_frame)
 {
   IndexNodeHandler root_node(file_header_, root_frame);
@@ -1495,14 +1578,17 @@ RC BplusTreeHandler::adjust_root(Frame *root_frame)
   return RC::SUCCESS;
 }
 
+// 合并或者重新分配
 template <typename IndexNodeHandlerType>
 RC BplusTreeHandler::coalesce_or_redistribute(Frame *frame)
 {
   IndexNodeHandlerType index_node(file_header_, frame);
+  // 如果节点的数据量大于最小值，那么不需要合并或者重新分配
   if (index_node.size() >= index_node.min_size()) {
     return RC::SUCCESS;
   }
 
+  // 获取父节点
   const PageNum parent_page_num = index_node.parent_page_num();
   if (BP_INVALID_PAGE_NUM == parent_page_num) {
     // this is the root page

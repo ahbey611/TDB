@@ -1,17 +1,16 @@
-#include "include/common/rc.h"
 #include "include/storage_engine/index/bplus_tree_index.h"
+
 #include "gtest/gtest.h"
+#include "include/common/rc.h"
 
 /**
  * 假设table的元数据为(id int, name char, score float);
  */
 
-
 /**
  * 虽然支持在多列字段上创建索引，但该测试样例仅仅在单一字段上面插入和删除索引
  */
-TEST(test_bplus_tree_index, single_attribute)
-{
+TEST(test_bplus_tree_index, single_attribute) {
   RC rc = RC::SUCCESS;
 
   /* 1. 创建index */
@@ -20,11 +19,11 @@ TEST(test_bplus_tree_index, single_attribute)
   id_meta.init("id", AttrType::INTS, 0, 4, true, true);
   multi_field_metas.emplace_back(&id_meta);
   bool is_unique = false;
-  const char* index_name = "i_id";
+  const char *index_name = "i_id";
   IndexMeta new_index_meta;
   new_index_meta.init(is_unique, index_name, multi_field_metas);
   BplusTreeIndex *index = new BplusTreeIndex();
-  const char* index_file = "table1-i_id.index";
+  const char *index_file = "table1-i_id.index";
   ::remove(index_file);
   std::vector<FieldMeta> new_multi_field_metas;
   for (int i = 0; i < multi_field_metas.size(); i++) {
@@ -33,13 +32,14 @@ TEST(test_bplus_tree_index, single_attribute)
   rc = index->create(index_file, new_index_meta, new_multi_field_metas);
   if (rc != RC::SUCCESS) {
     delete index;
-    LOG_ERROR("Failed to create bplus tree index. file name=%s, rc=%d:%s", index_file, rc, strrc(rc));
+    LOG_ERROR("Failed to create bplus tree index. file name=%s, rc=%d:%s",
+              index_file, rc, strrc(rc));
   }
 
   /* 2. 插入10个索引项 */
   Record record;
   char buffer[13];
-  for(int i = 0; i < 10; i++) {
+  for (int i = 0; i < 10; i++) {
     int id = 1 + i;
     char name = 'a' + i;
     double score = 3.6 + i;
@@ -48,6 +48,7 @@ TEST(test_bplus_tree_index, single_attribute)
     std::memcpy(buffer + sizeof(int) + sizeof(char), &score, sizeof(double));
     record.set_rid(1, i);
     record.set_data(buffer, 13);
+
     rc = index->insert_entry(record.data(), &record.rid());
     ASSERT_EQ(rc, RC::SUCCESS);
   }
@@ -60,12 +61,13 @@ TEST(test_bplus_tree_index, single_attribute)
 
   /* 4. 查看最后一个索引项的插入结果 */
   int multi_keys_amount = new_multi_field_metas.size();
-  const char * multi_keys[multi_keys_amount];
+  const char *multi_keys[multi_keys_amount];
   for (int i = 0; i < multi_keys_amount; i++) {
     multi_keys[i] = record.data() + new_multi_field_metas[i].offset();
   }
   std::list<RID> find_rids;
-  rc = index_handler.get_entry(multi_keys, find_rids, new_multi_field_metas.size());
+  rc = index_handler.get_entry(multi_keys, find_rids,
+                               new_multi_field_metas.size());
   ASSERT_EQ(rc, RC::SUCCESS);
   ASSERT_NE(find_rids.size(), 0);
   RID result_rid = find_rids.back();
@@ -81,7 +83,8 @@ TEST(test_bplus_tree_index, single_attribute)
   index_handler.print_tree();
   printf("\n");
   find_rids.clear();
-  rc = index_handler.get_entry(multi_keys, find_rids, new_multi_field_metas.size());
+  rc = index_handler.get_entry(multi_keys, find_rids,
+                               new_multi_field_metas.size());
   ASSERT_EQ(rc, RC::SUCCESS);
   ASSERT_EQ(find_rids.size(), 0);
 
@@ -90,12 +93,11 @@ TEST(test_bplus_tree_index, single_attribute)
   delete index;
 }
 
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
   // 分析gtest程序的命令行参数
   testing::InitGoogleTest(&argc, argv);
 
-  BufferPoolManager* buffer_pool_manager_ = new BufferPoolManager();
+  BufferPoolManager *buffer_pool_manager_ = new BufferPoolManager();
   BufferPoolManager::set_instance(buffer_pool_manager_);
 
   // 调用RUN_ALL_TESTS()运行所有测试用例

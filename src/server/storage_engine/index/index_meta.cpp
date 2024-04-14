@@ -19,6 +19,10 @@ RC IndexMeta::init(bool is_unique, const char *name, std::vector<const FieldMeta
   return RC::SUCCESS;
 }
 
+/**
+ * 将IndexMeta序列化为json
+ * @param json_value
+ */
 void IndexMeta::to_json(Json::Value &json_value) const
 {
   json_value[UNIQUE_FLAG] = is_unique_;
@@ -33,6 +37,13 @@ void IndexMeta::to_json(Json::Value &json_value) const
   json_value[FIELD_FIELD_NAME] = multi_fields_names;
 }
 
+/**
+ * 从json中反序列化IndexMeta
+ * @param table
+ * @param json_value
+ * @param index
+ * @return
+ */
 RC IndexMeta::from_json(const TableMeta &table, const Json::Value &json_value, IndexMeta &index)
 {
   const Json::Value &unique_value = json_value[UNIQUE_FLAG];

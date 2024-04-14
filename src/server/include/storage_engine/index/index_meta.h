@@ -33,6 +33,7 @@ public:
   const char *name() const;
   const char *field(int i) const;
   const char *multi_fields() const;
+  // 返回索引的字段数量
   const size_t field_amount() const;
   const bool is_unique() const;
 
@@ -44,6 +45,18 @@ public:
 
 protected:
   bool is_unique_;  // 是否是唯一索引
-  std::string name_;  // index's name
-  std::vector<std::string> multi_fields_;
+  std::string name_;  // index's name 索引的名称
+  std::vector<std::string> multi_fields_; // 索引的字段，例如：["id", "name"]
 };
+
+/**
+* "indexes" :
+[
+    {
+       "field_amount" : "1",
+       "field_name" : "id",
+       "is_unique" : false,
+       "name" : "i_id"
+    }
+],
+*/

@@ -102,6 +102,22 @@ public:
     }
   }
 
+  friend std::ostream &operator<<(std::ostream& os, const Record& record)
+  {
+    os << "RID: " << record.rid().to_string();
+    os<<'\n';
+    if (record.len() > 0 && record.data() != nullptr) {
+      os << ", Data: ";
+      // 输出 data 内容，这里假设 data 是以字符串形式存储的
+      for (int i = 0; i < record.len(); ++i) {
+        os << record.data()[i];
+      }
+      os<<'\n';
+    }
+    return os;
+  }
+
+
   Record &operator=(const Record &other)
   {
     if (this == &other) {
