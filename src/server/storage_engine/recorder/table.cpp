@@ -405,12 +405,9 @@ RC Table::insert_record(Record &record) {
     // 插入索引数据
     rc = bplusTreeIndex->insert_entry(record.data(), &record.rid());
 
-    // 如果插入失败，需要回滚之前插入的索引数据
+    // 如果插入失败，需要回滚之前插入的“索引”与“数据”
+    // (可能情况：唯一索引上插入了重复数据)
     if (rc != RC::SUCCESS) {
-      // 可能情况：唯一索引上插入了重复数据
-      LOG_ERROR("Failed to insert record into index. table=%s, index=%s, rc=%s",
-                name(), bplusTreeIndex->index_meta().name(), strrc(rc));
-
       // 索引插入失败状态设置
       index_insert_status = false;
 
@@ -425,25 +422,21 @@ RC Table::insert_record(Record &record) {
         // 之前插入的索引数据需要删除
         rollback_bplusTreeIndex->delete_entry(record.data(), &record.rid());
       }
-      break;
+
+      // 如果索引插入失败，需要回滚数据，即把刚刚添加的数据删除
+      record_handler_->delete_record(&record.rid());
+
+      return rc;
     }
   }
 
-  // 如果索引插入失败，需要回滚数据
-  if (!index_insert_status) {
-    // 删除数据
-    record_handler_->delete_record(&record.rid());
-    return rc;
-  }
-
-  return RC::SUCCESS;
+  return rc;
 }
 
 RC Table::delete_record(const Record &record) {
   RC rc = RC::SUCCESS;
 
   // TODO [Lab2] 增加索引的处理逻辑
-  rc = record_handler_->delete_record(&record.rid());
 
   // 索引删除状态
   bool index_delete_status = true;
@@ -458,9 +451,6 @@ RC Table::delete_record(const Record &record) {
 
     // 删除失败，需要回滚之前删除的索引数据
     if (rc != RC::SUCCESS) {
-      LOG_ERROR("Failed to delete record from index. table=%s, index=%s, rc=%s",
-                name(), bplusTreeIndex->index_meta().name(), strrc(rc));
-
       // 索引删除失败状态设置
       index_delete_status = false;
 
@@ -475,22 +465,17 @@ RC Table::delete_record(const Record &record) {
         // 之前删除的索引数据需要重新插入
         rollback_bplusTreeIndex->insert_entry(record.data(), &record.rid());
       }
-
       return rc;
     }
   }
 
-  RID *rid = const_cast<RID *>(&record.rid());
-
-  // 如果索引删除失败，需要回滚数据
-  if (!index_delete_status) {
-    // 插入数据
-    record_handler_->insert_record(record.data(), table_meta_.record_size(),
-                                   rid);
-    return rc;
+  // 正确删除索引数据后，删除数据
+  if (index_delete_status) {
+    // 删除数据
+    rc = record_handler_->delete_record(&record.rid());
   }
 
-  return RC::SUCCESS;
+  return rc;
 }
 
 RC Table::visit_record(const RID &rid, bool readonly,
