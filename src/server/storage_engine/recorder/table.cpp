@@ -400,14 +400,16 @@ RC Table::insert_record(Record &record) {
 
   // 更新索引
   for (Index *index : indexes_) {
+    // 转化为B+树索引
+    BplusTreeIndex *bplusTreeIndex = dynamic_cast<BplusTreeIndex *>(index);
     // 插入索引数据
-    rc = index->insert_entry(record.data(), &record.rid());
+    rc = bplusTreeIndex->insert_entry(record.data(), &record.rid());
 
     // 如果插入失败，需要回滚之前插入的索引数据
     if (rc != RC::SUCCESS) {
       // 可能情况：唯一索引上插入了重复数据
       LOG_ERROR("Failed to insert record into index. table=%s, index=%s, rc=%s",
-                name(), index->index_meta().name(), strrc(rc));
+                name(), bplusTreeIndex->index_meta().name(), strrc(rc));
 
       // 索引插入失败状态设置
       index_insert_status = false;
@@ -418,8 +420,10 @@ RC Table::insert_record(Record &record) {
         if (rollback_index == index) {
           break;
         }
+        BplusTreeIndex *rollback_bplusTreeIndex =
+            dynamic_cast<BplusTreeIndex *>(rollback_index);
         // 之前插入的索引数据需要删除
-        rollback_index->delete_entry(record.data(), &record.rid());
+        rollback_bplusTreeIndex->delete_entry(record.data(), &record.rid());
       }
       break;
     }
@@ -446,10 +450,16 @@ RC Table::delete_record(const Record &record) {
 
   // 删除索引
   for (Index *index : indexes_) {
-    rc = index->delete_entry(record.data(), &record.rid());
+    // 转化为B+树索引
+    BplusTreeIndex *bplusTreeIndex = dynamic_cast<BplusTreeIndex *>(index);
+
+    // 删除索引数据
+    rc = bplusTreeIndex->delete_entry(record.data(), &record.rid());
+
+    // 删除失败，需要回滚之前删除的索引数据
     if (rc != RC::SUCCESS) {
       LOG_ERROR("Failed to delete record from index. table=%s, index=%s, rc=%s",
-                name(), index->index_meta().name(), strrc(rc));
+                name(), bplusTreeIndex->index_meta().name(), strrc(rc));
 
       // 索引删除失败状态设置
       index_delete_status = false;
@@ -460,8 +470,10 @@ RC Table::delete_record(const Record &record) {
         if (rollback_index == index) {
           break;
         }
+        BplusTreeIndex *rollback_bplusTreeIndex =
+            dynamic_cast<BplusTreeIndex *>(rollback_index);
         // 之前删除的索引数据需要重新插入
-        rollback_index->insert_entry(record.data(), &record.rid());
+        rollback_bplusTreeIndex->insert_entry(record.data(), &record.rid());
       }
 
       return rc;
