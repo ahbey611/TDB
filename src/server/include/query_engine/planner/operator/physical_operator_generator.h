@@ -2,8 +2,8 @@
 
 #include <memory>
 
-#include "src/server/include/common/rc.h"
 #include "physical_operator.h"
+#include "src/server/include/common/rc.h"
 #include "src/server/include/query_engine/planner/node/logical_node.h"
 
 class TableGetLogicalNode;
@@ -23,13 +23,13 @@ class GroupByLogicalNode;
  * @ingroup PhysicalOperator
  * @details 根据逻辑节点树生成物理算子树。
  */
-class PhysicalOperatorGenerator
-{
-public:
+class PhysicalOperatorGenerator {
+ public:
   PhysicalOperatorGenerator() = default;
   virtual ~PhysicalOperatorGenerator() = default;
 
-  RC create(LogicalNode &logical_operator, std::unique_ptr<PhysicalOperator> &oper, bool is_delete = false);
+  RC create(LogicalNode &logical_operator,
+            std::unique_ptr<PhysicalOperator> &oper, bool is_delete = false);
 
 private:
   RC create_plan(TableGetLogicalNode &logical_oper, std::unique_ptr<PhysicalOperator> &oper, bool is_delete = false);
