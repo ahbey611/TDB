@@ -165,6 +165,12 @@ RC BplusTreeIndex::delete_entry(const char *record, const RID *rid) {
     LOG_WARN("failed to delete entry. rc=%d:%s", rc, strrc(rc));
     return rc;
   }
+
+  // 验证b+树是否合法
+  if (!index_handler_.validate_tree()) {
+    LOG_WARN("failed to validate tree");
+    return RC::INTERNAL;
+  }
   return RC::SUCCESS;
 }
 
