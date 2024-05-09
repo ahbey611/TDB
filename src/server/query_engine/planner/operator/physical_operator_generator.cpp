@@ -28,12 +28,17 @@
 #include "include/query_engine/planner/operator/update_physical_operator.h"
 #include "include/storage_engine/recorder/table.h"
 
-// 新增加
+// 新增加 Lab2
 #include "src/server/include/query_engine/planner/operator/index_scan_physical_operator.h"
 #include "src/server/include/query_engine/structor/expression/comparison_expression.h"
 #include "src/server/include/query_engine/structor/expression/expression.h"
 #include "src/server/include/query_engine/structor/expression/field_expression.h"
 #include "src/server/include/query_engine/structor/expression/value_expression.h"
+
+// 新增加 Lab3
+#include "include/query_engine/planner/node/join_logical_node.h"
+#include "include/query_engine/planner/operator/join_physical_operator.h"
+
 using namespace std;
 
 RC PhysicalOperatorGenerator::create(LogicalNode &logical_operator,
@@ -85,7 +90,10 @@ RC PhysicalOperatorGenerator::create(LogicalNode &logical_operator,
                          oper, is_delete);
     }
     // TODO [Lab3] 实现JoinNode到JoinOperator的转换
-    case LogicalNodeType::JOIN:
+    case LogicalNodeType::JOIN: {
+      return create_plan(static_cast<JoinLogicalNode &>(logical_operator),
+                         oper);
+    }
     case LogicalNodeType::GROUP_BY: {
       return RC::UNIMPLENMENT;
     }
@@ -416,8 +424,43 @@ RC PhysicalOperatorGenerator::create_plan(ExplainLogicalNode &explain_oper,
   return rc;
 }
 
+/* 1. 获取左右子算子
+2. 创建JoinPhysicalOperator
+3. 将左右子算子加入到JoinPhysicalOperator中
+4. 返回JoinPhysicalOperator */
+
 // TODO [Lab3] 根据LogicalNode生成对应的PhyiscalOperator
 RC PhysicalOperatorGenerator::create_plan(JoinLogicalNode &join_oper,
                                           unique_ptr<PhysicalOperator> &oper) {
-  return RC::UNIMPLENMENT;
+  vector<unique_ptr<LogicalNode>> &children = join_oper.children();
+  if (children.size() != 2) {
+    LOG_WARN("Join operator should have 2 children");
+    return RC::VARIABLE_NOT_VALID;
+  }
+
+  unique_ptr<PhysicalOperator> left_child;
+  unique_ptr<PhysicalOperator> right_child;
+
+  RC rc = create(*children[0].get(), left_child);
+  if (rc != RC::SUCCESS) {
+    LOG_WARN("failed to init left child operator: %s", strrc(rc));
+    return rc;
+  }
+
+  rc = create(*children[1].get(), right_child);
+  if (rc != RC::SUCCESS) {
+    LOG_WARN("failed to init right child operator: %s", strrc(rc));
+    return rc;
+  }
+
+  // 使用join_condition构造JoinPhysicalOperator
+  JoinPhysicalOperator *join_physical_operator =
+      new JoinPhysicalOperator(std::move(join_oper.condition()));
+  // 添加左右子算子
+  join_physical_operator->add_child(std::move(left_child));
+  join_physical_operator->add_child(std::move(right_child));
+  // 设置
+  oper = unique_ptr<PhysicalOperator>(join_physical_operator);
+
+  return rc;
 }
