@@ -139,7 +139,7 @@ RC LogicalPlanGenerator::plan_node(SelectStmt *select_stmt,
     }
     // 生成一个table_get_node节点
     std::unique_ptr<TableGetLogicalNode> table_get_node(new TableGetLogicalNode(
-        table, select_stmt->table_alias()[count], fields, false /*readonly*/));
+        table, select_stmt->table_alias()[count], fields, true /*readonly*/));
     // table->name()
     // 添加至所有table_get_node
     all_table_get_node.emplace_back(std::move(table_get_node));

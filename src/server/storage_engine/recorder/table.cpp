@@ -291,6 +291,8 @@ RC Table::create_index(Trx *trx,
 
   // 遍历当前的所有数据，插入这个索引
   RecordFileScanner scanner;
+  // ###
+  // LOG_ERROR("Table::create_index: scanner.open_scan， readonly=%d", true);
   rc = get_record_scanner(scanner, trx, true /*readonly*/);
   if (rc != RC::SUCCESS) {
     LOG_WARN(
@@ -583,6 +585,7 @@ RC Table::init_record_handler(const char *base_dir) {
 
 RC Table::get_record_scanner(RecordFileScanner &scanner, Trx *trx,
                              bool readonly) {
+  // LOG_ERROR("Table::get_record_scanner, readonly=%d", readonly);
   RC rc = scanner.open_scan(this, *data_buffer_pool_, trx, readonly, nullptr);
   if (rc != RC::SUCCESS) {
     LOG_ERROR("failed to open scanner. rc=%s", strrc(rc));

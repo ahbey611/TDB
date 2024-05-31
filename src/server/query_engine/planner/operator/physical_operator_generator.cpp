@@ -112,6 +112,11 @@ RC PhysicalOperatorGenerator::create_plan(TableGetLogicalNode &table_get_oper,
                                           bool is_delete) {
   vector<unique_ptr<Expression>> &predicates = table_get_oper.predicates();
   Index *index = nullptr;
+
+  Table *tempTable = table_get_oper.table();
+  bool tempReadonly = table_get_oper.readonly();
+  // LOG_ERROR("TableScanPhysicalOperator create_plan, readonly=%d",
+  //           table_get_oper.readonly());
   // TODO [Lab2] 生成IndexScanOperator的准备工作,主要包含:
   // 1. 通过predicates获取具体的值表达式， 目前应该只支持等值表达式的索引查找
   // example:
